@@ -5,7 +5,47 @@ from prophet.plot import plot_plotly, plot_components_plotly
 import numpy as np
 import plotly.express as px
 
-a = Path("hekaton/ovrednoteni_podatki/m21.csv")
+window_size = 12
+abs_factor = 1.5    
+calibration_factor = 3.5
+
+
+def detectAnomaly(row):
+      # Potrebno izracunati brke za posamezni window
+      
+      #upperBound = povp + sorgoNum
+      #lowerBound = popv - sorgoNum
+      # upperBound = row['mean'] + row["treshold"]
+      # lowerBound = row['mean'] - row["treshold"]
+      # print("UpperBound: " + str(upperBound))
+      # print("LowerBound: " + str(lowerBound))
+      print("Upper bound: " + str(row['upperBound']))
+      print("Lower bound: " + str(row['lowerBound']))
+
+      delta = row['upperBound'] - row['lowerBound']
+      print("DELTA: " + str(delta))
+      print("Row: " + str(row["y"]))
+
+      if(np.isnan(row['upperBound'])):
+            # Rolling window se ni tako dalec
+            return "No"
+
+      quantileAnomaly = False
+
+      if(row['y'] > row['upperBound']) or row['y'] < row['lowerBound']:
+            print("Found anomaly")
+            quantileAnomaly = True
+
+      # absAnomaly = np.abs(row['error']) > (abs_factor * row['uncertainty'])
+
+      # if(absAnomaly or quantileAnomaly):
+      if(True):
+            return "Yes"
+      else:
+            return "No"
+      
+
+a = Path("./ovrednoteni_podatki/m44.csv")
 #if a.exists():
 #    print("File exists")
 #else:
@@ -16,17 +56,8 @@ df = pd.read_csv(a,header=None)
 df.columns = ['0', 'ds', 'y', '3']
 df['ds'] = pd.to_datetime(df['ds'] + ' 2024', format='%d.%m %H:%M %Y') #doda datum kr drugace panda ne dela
 
-
-brki = np.quantile(df['y'], [0,0.25,0.5,0.75,1])
-low_high_AVG = brki[3] - brki[1]
-cb_fac = 0.1
-
-sorgo_num = low_high_AVG * cb_fac
-print("Brki: ", brki)
-print("Šorgotovo število: ", sorgo_num)
-
 #print(df.head())
-m = Prophet(changepoint_range=0.8, changepoint_prior_scale=0.95)
+m = Prophet(changepoint_range=0.8, changepoint_prior_scale=0.5)
 m.add_seasonality(name='hourly', period=0.04, fourier_order=20)
 m.fit(df)
 
@@ -39,24 +70,70 @@ forecast = m.predict(future)
 forecast_df = forecast[['ds','yhat','yhat_upper','yhat_lower']]
 forecast_df
 forecast_df['yhat'] = forecast_df['yhat'].astype(int)    
-#Merging two dataset to have the actual and prediction values
 forecasting_final = pd.merge(forecast_df, df, how='inner',
                                      left_on = 'ds', right_on = 'ds')
 
-# We calculate the prediction error here and uncertainty 
 forecasting_final['error'] = forecasting_final['y'] - forecasting_final['yhat']
 forecasting_final['uncertainty'] = forecasting_final['yhat_upper'] - forecasting_final['yhat_lower']
 
-# We this factor we can identify the outlier or anomaly. 
-# This factor can be customized based on the data
-factor = 0.5
-forecasting_final['anomaly'] = forecasting_final.apply(lambda x: 'Yes' 
-      if(np.abs(x['error']) >  factor*x['uncertainty']) else 'No', axis = 1)
+# forecasting_final['anomaly'] = forecasting_final.apply(lambda x: 'Yes' 
+#       if(np.abs(x['error']) >  factor*x['uncertainty']) else 'No', axis = 1)
+
+# Calculate sorgoNum aka treshold
+
+brki = np.quantile(df['y'], [0,0.25,0.5,0.75,1])
+low_high_AVG = brki[3] - brki[1]
+
+cb_fac = 0.025
+
+treshold = low_high_AVG * cb_fac
+# print(low_high_AVG)
+
+if(low_high_AVG < 1):
+  treshold = 1    
+
+print("Treshold: " + str(treshold))
+
+forecasting_final["mean"] = forecasting_final['y'].rolling(window=window_size).mean()
+# forecasting_final["q1"] = forecasting_final['y'].rolling(window=window_size).quantile(0.25)
+# forecasting_final["q3"] = forecasting_final['y'].rolling(window=window_size).quantile(0.75)
+# low_high_AVG = forecasting_final["q3"] - forecasting_final["q1"]
+# forecasting_final["treshold"] = low_high_AVG * calibration_factor 
+forecasting_final["upperBound"] = forecasting_final["mean"] + treshold
+forecasting_final["lowerBound"] = forecasting_final["mean"] - treshold
+
+# forecasting_final['anomaly'] = forecasting_final.apply(detectAnomaly, axis=1)
+
+# print(forecasting_final["y"][0])
+# print(len(forecasting_final["y"]) - window_size)
+
+length = len(forecasting_final["y"]) - window_size
+tempArray = np.array(['No' for _ in range(len(forecasting_final["y"]))])
+for i in range(0, length + 1):
+      mean = forecasting_final["y"][i:i+window_size].mean()
+      upperBound = mean + treshold
+      lowerBound = mean - treshold
+
+      anomaly = True
+
+      for j in range(i, i+window_size):
+            if (forecasting_final["y"][j] < lowerBound) or (forecasting_final["y"][j] > upperBound):
+                  anomaly = False
+
+
+      
+
+      # print(forecasting_final['anomaly'])
+      
+      if anomaly:
+            tempArray[i:i+window_size] = "Yes"
+
+forecasting_final["anomaly"] = tempArray
 
 color_discrete_map = {'Yes': 'rgb(255,12,0)', 'No': 'blue'}
 fig = px.scatter(forecasting_final, x='ds', y='y', color='anomaly', title='Anomaly',
                  color_discrete_map=color_discrete_map)
 
-#fig = m.plot(forecasting_final)
-#fig.show()
-#fig.waitforbuttonpress()
+fig = m.plot(forecasting_final)
+fig.waitforbuttonpress()
+# fig.show()
