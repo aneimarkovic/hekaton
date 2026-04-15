@@ -32,13 +32,21 @@ calibrationFactor = 0.025
 treshold = 0
 length = 0
 #Config data prophet
-factor = 0.8 # kako strogo odstopanje mora bit
+factor = 1 # kako strogo odstopanje mora bit
 
 def findAnomaliesUsingSteepSlopes():
     global anomaliesValuesArr
     global originalValuesArr
     global anomaliesStatusArr
     global df
+    global finalDataFrame
+    global treshold
+    global window_size
+    global quantiles
+    global q1AndQ3Diffrence
+    global calibrationFactor
+    global length
+    global factor
     min_peaks = s.argrelmin(df['y'].values, order=1)[0]
     max_peaks = s.argrelmax(df['y'].values, order=1)[0]  
 
@@ -90,7 +98,14 @@ def findAnomaliesUsingRollingWindow():
     global originalValuesArr
     global anomaliesStatusArr
     global df
-    # print("DF in rolling windows ", df)
+    global finalDataFrame
+    global treshold
+    global window_size
+    global quantiles
+    global q1AndQ3Diffrence
+    global calibrationFactor
+    global length
+    global factor
     for i in range(0, length + 1):
       mean = df['y'][i:i+window_size].mean()
       upperBound = mean + treshold
@@ -102,16 +117,27 @@ def findAnomaliesUsingRollingWindow():
             if (df["y"][j] < lowerBound) or (df["y"][j] > upperBound):
                   anomaly = False
 
-      # print(df['anomaly'])
+      if (df["y"][i] == 0.0):
+        anomaliesValuesArr[i] = None
+        anomaliesStatusArr[i] = "Yes"
+
       if anomaly:
-            anomaliesStatusArr[i:i+window_size] = "Yes"
-            anomaliesValuesArr[i:i+window_size] = None
+        anomaliesStatusArr[i:i+window_size] = "Yes"
+        anomaliesValuesArr[i:i+window_size] = None
 
 def findAnomaliesUsingProphet():
     global anomaliesValuesArr
     global originalValuesArr
     global anomaliesStatusArr
     global df
+    global finalDataFrame
+    global treshold
+    global window_size
+    global quantiles
+    global q1AndQ3Diffrence
+    global calibrationFactor
+    global length
+    global factor
     df["y"] = anomaliesValuesArr
     m = Prophet(changepoint_range=0.3, changepoint_prior_scale=0.5,interval_width=0.87)
     m.add_country_holidays(country_name='SI')
@@ -145,12 +171,18 @@ def iterate():
     global originalValuesArr
     global anomaliesStatusArr
     global df
+    global finalDataFrame
+    global treshold
+    global window_size
+    global quantiles
+    global q1AndQ3Diffrence
+    global calibrationFactor
+    global length
+    global factor
     directory = os.fsencode("./vsi_podatki").decode("utf-8")
-    # print("Directory ", directory)
-    # print(os.listdir(directory))
     lst = os.listdir(directory)
     lst.sort(key=sortFunc)
-    for file in lst:
+    for file in lst[:2]:
         filename = os.fsdecode(file)
         print("File ", filename)
         if filename.endswith(".csv"): 
@@ -160,8 +192,6 @@ def iterate():
                 tempTimestampCol = df['ds']
                 
                 df['ds'] = pd.to_datetime(df['ds'] + ' 2024', format='%d.%m %H:%M %Y')
-                print("DF size ", len(df["y"]))
-                # print("DF", df)
                 anomaliesStatusArr = np.array(['No' for _ in range(len(df["y"]))])
                 anomaliesValuesArr = df["y"]
                 originalValuesArr = df["y"]
@@ -170,27 +200,34 @@ def iterate():
                 q1AndQ3Diffrence = quantiles[3] - quantiles[1]
                 treshold = q1AndQ3Diffrence * calibrationFactor
                 length = len(df["y"]) - window_size
-                print("Length ",length)
+                # print("Length ",length)
                 findAnomaliesUsingRollingWindow()
                 findAnomaliesUsingSteepSlopes()
                 finalDataFrame = findAnomaliesUsingProphet()
 
-                finalDataFrame["y"] = originalValuesArr
                 # print(finalDataFrame)
                 anomaliesArr = []
+                # print(finalDataFrame["anomaly"])
+                finalDataFrame["anomaly"] = finalDataFrame["anomaly"].replace("Ye", "Yes")
                 for i in range(0, len(finalDataFrame["anomaly"])):
-                    if finalDataFrame["anomaly"][i] == "Yes":
+                    if (finalDataFrame["anomaly"][i] == "Yes"):
                         anomaliesArr.append(1)
                     else:
                         anomaliesArr.append(0)
-
                         # print(len())
-                print("Anomalies arr ", len(anomaliesArr))
+                # print("Anomalies arr ", len(anomaliesArr))
                 df["anomalies"] = anomaliesArr
-                print("Df anomalies ", len(df["anomalies"]))
+                # print("Df anomalies ", len(df["anomalies"]))
                 df["ds"] = tempTimestampCol
-                # header = ["InviteTime (Oracle)", "Orig Number", "Orig IP Address", "Dest Number"]
-                df.to_csv('rezultati.csv', mode='a', header = None)
+                df["y"] = originalValuesArr
+                # print(df)
+                df.to_csv('rezultati.csv', mode='a', header = None, index=False)
+                finalDataFrame["y"] = originalValuesArr
+                #Display results
+                color_discrete_map = {'Yes': 'rgb(255,12,0)', 'No': 'blue'}
+                fig = px.scatter(finalDataFrame, x='ds', y='y', color='anomaly', title='Anomaly',
+                    color_discrete_map=color_discrete_map)
+                fig.show()
         else:
                 continue 
 
