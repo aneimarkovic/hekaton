@@ -45,7 +45,7 @@ def detectAnomaly(row):
             return "No"
       
 
-a = Path("./ovrednoteni_podatki/m44.csv")
+a = Path("./vsi_podatki/m15.csv")
 #if a.exists():
 #    print("File exists")
 #else:
@@ -53,11 +53,11 @@ a = Path("./ovrednoteni_podatki/m44.csv")
 
 df = pd.read_csv(a,header=None)
 #print(df)
-df.columns = ['0', 'ds', 'y', '3']
+df.columns = ['0', 'ds', 'y']
 df['ds'] = pd.to_datetime(df['ds'] + ' 2024', format='%d.%m %H:%M %Y') #doda datum kr drugace panda ne dela
 
 #print(df.head())
-m = Prophet(changepoint_range=0.8, changepoint_prior_scale=0.5)
+m = Prophet(changepoint_range=0.9, changepoint_prior_scale=0.2,interval_width=0.9)
 m.add_seasonality(name='hourly', period=0.04, fourier_order=20)
 m.fit(df)
 
@@ -129,11 +129,17 @@ for i in range(0, length + 1):
             tempArray[i:i+window_size] = "Yes"
 
 forecasting_final["anomaly"] = tempArray
+factor = 0.9 # kako strogo odstopanje mora bit
+for i in range(0,length + window_size):
+      print("in_arr",i,forecasting_final['error'][i],factor*forecasting_final['uncertainty'][i])
+      if(np.abs(forecasting_final['error'][i]) > factor*forecasting_final['uncertainty'][i]):
+            forecasting_final.loc[i,"anomaly"] = "Yes"
+            print(forecasting_final["anomaly"][i])
 
 color_discrete_map = {'Yes': 'rgb(255,12,0)', 'No': 'blue'}
 fig = px.scatter(forecasting_final, x='ds', y='y', color='anomaly', title='Anomaly',
                  color_discrete_map=color_discrete_map)
 
+fig.show()
 fig = m.plot(forecasting_final)
 fig.waitforbuttonpress()
-# fig.show()
