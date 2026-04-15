@@ -25,14 +25,14 @@ anomaliesValuesArr = []
 originalValuesArr = []
 
 #Config data sliding window
-window_size = 12
+window_size = 9
 quantiles = []
 q1AndQ3Diffrence = 0
-calibrationFactor = 0.025
+calibrationFactor = 0.035
 treshold = 0
 length = 0
 #Config data prophet
-factor = 1 # kako strogo odstopanje mora bit
+factor = 1.1 # kako strogo odstopanje mora bit
 
 def findAnomaliesUsingSteepSlopes():
     global anomaliesValuesArr
@@ -86,44 +86,60 @@ def findAnomaliesUsingSteepSlopes():
 
     #Upper Bound is 50% of avg
     steep_upper_bound = (avg_all_steepness * 3) / 2
+    # steep_upper_bound = (avg_all_steepness * 150) / 100
     for index, row in filtered_df.iterrows():
       if ( row['steep'] > steep_upper_bound):
            int_left = int(row['left'])
            int_right = int(row['right'])
-           anomaliesStatusArr[int_left:int_right + 1] = "Yes"
-           anomaliesValuesArr[int_left:int_right + 1] = None
+
+           print("Row: \n", row)
+           
+           diffrences = []
+           for i in range(int_left + 1, int_right):
+                curr = df["y"][i]
+                prev = df["y"][i-1]
+                print(curr, ", ", prev)
+                diffrences.append(abs(prev-curr))
+        
+           print("\n")
+           avgDiffrence = np.mean(diffrences)
+           stdDiffrence = np.std(diffrences)
+
+           print("Diffrence: ", stdDiffrence)
+
+           steepnesTreshold = avgDiffrence * stdDiffrence
+
+           for i in range(int_left + 1, int_right):
+                curr = df["y"][i]
+                prev = df["y"][i-1]
+                diff = abs(prev-curr)
+                if diff > steepnesTreshold:
+                    anomaliesStatusArr[int_left:int_right + 1] = "Yes"
+                    anomaliesValuesArr[int_left:int_right + 1] = None
 
 def findAnomaliesUsingRollingWindow():
-    global anomaliesValuesArr
-    global originalValuesArr
-    global anomaliesStatusArr
-    global df
-    global finalDataFrame
-    global treshold
-    global window_size
-    global quantiles
-    global q1AndQ3Diffrence
-    global calibrationFactor
-    global length
-    global factor
-    for i in range(0, length + 1):
-      mean = df['y'][i:i+window_size].mean()
-      upperBound = mean + treshold
-      lowerBound = mean - treshold
+    global anomaliesValuesArr, anomaliesStatusArr, df
+    global window_size, length
 
-      anomaly = True
+    y = df['y'].values.astype(float).copy()
+    n = len(y)
 
-      for j in range(i, i+window_size):
-            if (df["y"][j] < lowerBound) or (df["y"][j] > upperBound):
-                  anomaly = False
+    zero_mask = (y == 0.0)
+    anomaliesStatusArr[zero_mask] = "Yes"
+    anomaliesValuesArr[zero_mask] = np.nan
 
-      if (df["y"][i] == 0.0):
-        anomaliesValuesArr[i] = None
-        anomaliesStatusArr[i] = "Yes"
-
-      if anomaly:
-        anomaliesStatusArr[i:i+window_size] = "Yes"
-        anomaliesValuesArr[i:i+window_size] = None
+    # Izračunaj globalni std samo iz ne-anomalnih vrednosti
+    valid_vals = y[~np.isnan(y)]
+    global_std = np.std(valid_vals)
+    
+    # Flat segment: lokalni std mora biti manjši od globalnega
+    flat_threshold = global_std * 0.03 
+    
+    for i in range(n - window_size + 1):
+        window = y[i:i + window_size]
+        if np.std(window) < flat_threshold:
+            anomaliesStatusArr[i:i + window_size] = "Yes"
+            anomaliesValuesArr[i:i + window_size] = np.nan
 
 def findAnomaliesUsingProphet():
     global anomaliesValuesArr
@@ -138,8 +154,20 @@ def findAnomaliesUsingProphet():
     global calibrationFactor
     global length
     global factor
+
     df["y"] = anomaliesValuesArr
-    m = Prophet(changepoint_range=0.3, changepoint_prior_scale=0.5,interval_width=0.87)
+    xd = 0
+    for x in df["y"]:
+        if (not np.isnan(x)):
+            xd += 1
+    print(xd)
+    if (xd < 4): # vsaj 3 razlicne
+        print("not unique", df["y"] )
+        df["anomaly"] = anomaliesStatusArr
+        return df
+    
+    df["y"] = anomaliesValuesArr
+    m = Prophet(changepoint_range=0.3, changepoint_prior_scale=0.5,interval_width=0.88)
     m.add_country_holidays(country_name='SI')
     # m.add_seasonality(name='hourly', period=0.04, fourier_order=20)
     m.fit(df)
@@ -182,7 +210,7 @@ def iterate():
     directory = os.fsencode("./vsi_podatki").decode("utf-8")
     lst = os.listdir(directory)
     lst.sort(key=sortFunc)
-    for file in lst[:2]:
+    for file in lst[186:187]:
         filename = os.fsdecode(file)
         print("File ", filename)
         if filename.endswith(".csv"): 
@@ -199,16 +227,17 @@ def iterate():
                 quantiles = np.quantile(df['y'], [0,0.25,0.5,0.75,1])
                 q1AndQ3Diffrence = quantiles[3] - quantiles[1]
                 treshold = q1AndQ3Diffrence * calibrationFactor
+                if treshold < 1.0:
+                    treshold = 1
                 length = len(df["y"]) - window_size
                 # print("Length ",length)
                 findAnomaliesUsingRollingWindow()
                 findAnomaliesUsingSteepSlopes()
                 finalDataFrame = findAnomaliesUsingProphet()
-
                 # print(finalDataFrame)
                 anomaliesArr = []
                 # print(finalDataFrame["anomaly"])
-                finalDataFrame["anomaly"] = finalDataFrame["anomaly"].replace("Ye", "Yes")
+                #finalDataFrame["anomaly"] = finalDataFrame["anomaly"].replace("Ye", "Yes")
                 for i in range(0, len(finalDataFrame["anomaly"])):
                     if (finalDataFrame["anomaly"][i] == "Yes"):
                         anomaliesArr.append(1)
