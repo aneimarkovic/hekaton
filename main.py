@@ -6,9 +6,47 @@ import numpy as np
 import plotly.express as px
 import scipy.signal as s
 
-window_size = 12      
+window_size = 12
+abs_factor = 1.5    
+calibration_factor = 3.5
 
-file = Path("./vsi_podatki/m182.csv")
+
+def detectAnomaly(row):
+      # Potrebno izracunati brke za posamezni window
+      
+      #upperBound = povp + sorgoNum
+      #lowerBound = popv - sorgoNum
+      # upperBound = row['mean'] + row["treshold"]
+      # lowerBound = row['mean'] - row["treshold"]
+      # print("UpperBound: " + str(upperBound))
+      # print("LowerBound: " + str(lowerBound))
+      print("Upper bound: " + str(row['upperBound']))
+      print("Lower bound: " + str(row['lowerBound']))
+
+      delta = row['upperBound'] - row['lowerBound']
+      print("DELTA: " + str(delta))
+      print("Row: " + str(row["y"]))
+
+      if(np.isnan(row['upperBound'])):
+            # Rolling window se ni tako dalec
+            return "No"
+
+      quantileAnomaly = False
+
+      if(row['y'] > row['upperBound']) or row['y'] < row['lowerBound']:
+            print("Found anomaly")
+            quantileAnomaly = True
+
+      # absAnomaly = np.abs(row['error']) > (abs_factor * row['uncertainty'])
+
+      # if(absAnomaly or quantileAnomaly):
+      if(True):
+            return "Yes"
+      else:
+            return "No"
+      
+
+a = Path("./vsi_podatki/m198.csv")
 #if a.exists():
 #    print("File exists")
 #else:
