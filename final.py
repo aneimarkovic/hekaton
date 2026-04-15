@@ -25,7 +25,7 @@ anomaliesValuesArr = []
 originalValuesArr = []
 
 total_interruptions = 0
-total_duration_minutes = 0
+total_duration_hours = 0
 total_sites_processed = 0
 
 #Config data sliding window
@@ -199,18 +199,8 @@ def sortFunc(e):
 
 
 def calculate_site_metrics(df):
-    """
-    Identifies contiguous blocks of anomalies, calculates their count 
-    and total duration for a single site (file).
-    """
-    # Ensure ds is datetime
     df['ds'] = pd.to_datetime(df['ds'])
-    
-    # Create a grouping ID for consecutive anomalies
-    # This increments every time the 'anomalies' value changes
     df['group'] = (df['anomalies'] != df['anomalies'].shift()).cumsum()
-    
-    # Filter only the anomaly groups (where anomalies == 1)
     anomaly_groups = df[df['anomalies'] == 1].groupby('group')
     
     site_interruption_count = anomaly_groups.ngroups
@@ -220,18 +210,10 @@ def calculate_site_metrics(df):
         if len(group) > 0:
             start_time = group['ds'].min()
             end_time = group['ds'].max()
-            
-            # Duration is end - start. 
-            # Note: If there's only 1 point, duration is 0. 
-            # Often, we add one sampling interval to represent the block properly.
-            duration = end_time - start_time
-            
-            # If the sampling interval is known (e.g. 15 min), you might use:
-            # duration += pd.Timedelta(minutes=15) 
-            
+            duration = end_time - start_time + pd.Timedelta(hours=1)  # +1h interval
             site_total_duration += duration
             
-    return site_interruption_count, site_total_duration.total_seconds() / 60
+    return site_interruption_count, site_total_duration.total_seconds() / 3600  # ure
 
 def iterate():
     global anomaliesValuesArr
@@ -247,18 +229,18 @@ def iterate():
     global length
     global factor
     global total_interruptions 
-    global total_duration_minutes 
+    global total_duration_hours 
     global total_sites_processed 
     
-    directory = os.fsencode("./ovrednoteni_podatki").decode("utf-8")
+    directory = os.fsencode("./vsi_podatki").decode("utf-8")
     lst = os.listdir(directory)
     lst.sort(key=sortFunc)
-    for file in lst[0:3]:
+    for file in lst:
         filename = os.fsdecode(file)
         #print("File ", filename)
         if filename.endswith(".csv"): 
                 df = pd.read_csv(os.path.join(directory, filename),header=None)
-                df.columns = ['0', 'ds', 'y', '3']
+                df.columns = ['0', 'ds', 'y']
 
                 tempTimestampCol = df['ds']
                 
@@ -280,7 +262,7 @@ def iterate():
                 # print(finalDataFrame)
                 anomaliesArr = []
                 # print(finalDataFrame["anomaly"])
-                #finalDataFrame["anomaly"] = finalDataFrame["anomaly"].replace("Ye", "Yes")
+                finalDataFrame["anomaly"] = finalDataFrame["anomaly"].replace("Ye", "Yes")
                 for i in range(0, len(finalDataFrame["anomaly"])):
                     if (finalDataFrame["anomaly"][i] == "Yes"):
                         anomaliesArr.append(1)
@@ -293,16 +275,17 @@ def iterate():
                 # Calculate SAIFI/SAIDI components for THIS site
                 site_count, site_dur = calculate_site_metrics(df)
                 total_interruptions += site_count
-                total_duration_minutes += site_dur
+                total_duration_hours += site_dur
                 total_sites_processed += 1
                 
-                print(f"Site {filename}: Interruptions: {site_count}, Duration: {site_dur:.2f} min")
+                #print(f"Site {filename}: Interruptions: {site_count}, Duration: {site_dur:.2f} h")
                 
                 # print("Df anomalies ", len(df["anomalies"]))
                 df["ds"] = tempTimestampCol
                 df["y"] = originalValuesArr
                 #print(df)
                 df = df.drop(columns=["group"])
+                df = df.drop(columns=["y"])
                 df.to_csv('rezultati.csv', mode='a', header = None, index=False)
                 finalDataFrame["y"] = originalValuesArr
                 #Display results
@@ -315,16 +298,16 @@ def iterate():
         
     if total_sites_processed > 0:
         saifi = total_interruptions / total_sites_processed
-        saidi = total_duration_minutes / total_sites_processed
+        saidi = total_duration_hours / total_sites_processed
         
         print("\n" + "="*30)
         print("FINAL RELIABILITY INDICES")
         print("="*30)
         print(f"Total Sites Processed: {total_sites_processed}")
         print(f"Total Interruption Events: {total_interruptions}")
-        print(f"Total Duration: {total_duration_minutes:.2f} minutes")
+        print(f"Total Duration: {total_duration_hours:.2f} hours")
         print(f"SAIFI: {saifi:.4f} (Avg interruptions per customer)")
-        print(f"SAIDI: {saidi:.4f} (Avg duration per customer in minutes)")
+        print(f"SAIDI: {saidi:.4f} (Avg duration per customer in hours)")   
         print("="*30)
 
 if __name__ == "__main__":
