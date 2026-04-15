@@ -5,35 +5,40 @@ from prophet.plot import plot_plotly, plot_components_plotly
 import numpy as np
 import plotly.express as px
 import scipy.signal as s
-
+import os
 
 finalDataFrame = pd.DataFrame()
 file = Path("./vsi_podatki/m182.csv")  
-df = pd.read_csv(file,header=None)
+# df = pd.read_csv(file,header=None)
+df = pd.DataFrame()
 
 # Ovrednoteni podatki:
 # df.columns = ['0', 'ds', 'y', '3']
 
 #Vsi podatki:
-df.columns = ['0', 'ds', 'y']
+# df.columns = ['0', 'ds', 'y']
 
-df['ds'] = pd.to_datetime(df['ds'] + ' 2024', format='%d.%m %H:%M %Y')
+# df['ds'] = pd.to_datetime(df['ds'] + ' 2024', format='%d.%m %H:%M %Y')
 
-anomaliesStatusArr = np.array(['No' for _ in range(len(df["y"]))])
-anomaliesValuesArr = df["y"]
-originalValuesArr = df["y"]
+anomaliesStatusArr = []
+anomaliesValuesArr = []
+originalValuesArr = []
 
 #Config data sliding window
 window_size = 12
-quantiles = np.quantile(df['y'], [0,0.25,0.5,0.75,1])
-q1AndQ3Diffrence = quantiles[3] - quantiles[1]
+quantiles = []
+q1AndQ3Diffrence = 0
 calibrationFactor = 0.025
-treshold = q1AndQ3Diffrence * calibrationFactor
-length = len(df["y"]) - window_size
+treshold = 0
+length = 0
 #Config data prophet
 factor = 0.8 # kako strogo odstopanje mora bit
 
 def findAnomaliesUsingSteepSlopes():
+    global anomaliesValuesArr
+    global originalValuesArr
+    global anomaliesStatusArr
+    global df
     min_peaks = s.argrelmin(df['y'].values, order=1)[0]
     max_peaks = s.argrelmax(df['y'].values, order=1)[0]  
 
@@ -81,8 +86,13 @@ def findAnomaliesUsingSteepSlopes():
            anomaliesValuesArr[int_left:int_right + 1] = None
 
 def findAnomaliesUsingRollingWindow():
+    global anomaliesValuesArr
+    global originalValuesArr
+    global anomaliesStatusArr
+    global df
+    # print("DF in rolling windows ", df)
     for i in range(0, length + 1):
-      mean = df["y"][i:i+window_size].mean()
+      mean = df['y'][i:i+window_size].mean()
       upperBound = mean + treshold
       lowerBound = mean - treshold
 
@@ -98,6 +108,10 @@ def findAnomaliesUsingRollingWindow():
             anomaliesValuesArr[i:i+window_size] = None
 
 def findAnomaliesUsingProphet():
+    global anomaliesValuesArr
+    global originalValuesArr
+    global anomaliesStatusArr
+    global df
     df["y"] = anomaliesValuesArr
     m = Prophet(changepoint_range=0.3, changepoint_prior_scale=0.5,interval_width=0.87)
     m.add_country_holidays(country_name='SI')
@@ -122,21 +136,79 @@ def findAnomaliesUsingProphet():
     
     return forecasting_final
 
+def sortFunc(e):
+    return int(e[1:-4])
+
+
+def iterate():
+    global anomaliesValuesArr
+    global originalValuesArr
+    global anomaliesStatusArr
+    global df
+    directory = os.fsencode("./vsi_podatki").decode("utf-8")
+    # print("Directory ", directory)
+    # print(os.listdir(directory))
+    lst = os.listdir(directory)
+    lst.sort(key=sortFunc)
+    for file in lst:
+        filename = os.fsdecode(file)
+        print("File ", filename)
+        if filename.endswith(".csv"): 
+                df = pd.read_csv(os.path.join(directory, filename),header=None)
+                df.columns = ['0', 'ds', 'y']
+
+                tempTimestampCol = df['ds']
+                
+                df['ds'] = pd.to_datetime(df['ds'] + ' 2024', format='%d.%m %H:%M %Y')
+                print("DF size ", len(df["y"]))
+                # print("DF", df)
+                anomaliesStatusArr = np.array(['No' for _ in range(len(df["y"]))])
+                anomaliesValuesArr = df["y"]
+                originalValuesArr = df["y"]
+
+                quantiles = np.quantile(df['y'], [0,0.25,0.5,0.75,1])
+                q1AndQ3Diffrence = quantiles[3] - quantiles[1]
+                treshold = q1AndQ3Diffrence * calibrationFactor
+                length = len(df["y"]) - window_size
+                print("Length ",length)
+                findAnomaliesUsingRollingWindow()
+                findAnomaliesUsingSteepSlopes()
+                finalDataFrame = findAnomaliesUsingProphet()
+
+                finalDataFrame["y"] = originalValuesArr
+                # print(finalDataFrame)
+                anomaliesArr = []
+                for i in range(0, len(finalDataFrame["anomaly"])):
+                    if finalDataFrame["anomaly"][i] == "Yes":
+                        anomaliesArr.append(1)
+                    else:
+                        anomaliesArr.append(0)
+
+                        # print(len())
+                print("Anomalies arr ", len(anomaliesArr))
+                df["anomalies"] = anomaliesArr
+                print("Df anomalies ", len(df["anomalies"]))
+                df["ds"] = tempTimestampCol
+                # header = ["InviteTime (Oracle)", "Orig Number", "Orig IP Address", "Dest Number"]
+                df.to_csv('rezultati.csv', mode='a', header = None)
+        else:
+                continue 
 
 if __name__ == "__main__":
-    findAnomaliesUsingRollingWindow()
-    findAnomaliesUsingSteepSlopes()
-    finalDataFrame = findAnomaliesUsingProphet()
+    iterate()
+#     findAnomaliesUsingRollingWindow()
+#     findAnomaliesUsingSteepSlopes()
+#     finalDataFrame = findAnomaliesUsingProphet()
 
-    finalDataFrame["y"] = originalValuesArr
-    #Display results
-    color_discrete_map = {'Yes': 'rgb(255,12,0)', 'No': 'blue'}
-    fig = px.scatter(finalDataFrame, x='ds', y='y', color='anomaly', title='Anomaly',
-                    color_discrete_map=color_discrete_map)
+#     finalDataFrame["y"] = originalValuesArr
+#     #Display results
+#     color_discrete_map = {'Yes': 'rgb(255,12,0)', 'No': 'blue'}
+#     fig = px.scatter(finalDataFrame, x='ds', y='y', color='anomaly', title='Anomaly',
+#                     color_discrete_map=color_discrete_map)
 
-    # #Display plot
-    # fig = m.plot(forecasting_final)
-    # fig.waitforbuttonpress()
+#     # #Display plot
+#     # fig = m.plot(forecasting_final)
+#     # fig.waitforbuttonpress()
 
-    #Display plot on web
-    fig.show()
+#     #Display plot on web
+#     fig.show()
