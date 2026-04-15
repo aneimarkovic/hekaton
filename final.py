@@ -24,6 +24,10 @@ anomaliesStatusArr = []
 anomaliesValuesArr = []
 originalValuesArr = []
 
+total_interruptions = 0
+total_duration_minutes = 0
+total_sites_processed = 0
+
 #Config data sliding window
 window_size = 9
 quantiles = []
@@ -92,20 +96,20 @@ def findAnomaliesUsingSteepSlopes():
            int_left = int(row['left'])
            int_right = int(row['right'])
 
-           print("Row: \n", row)
+           #print("Row: \n", row)
            
            diffrences = []
            for i in range(int_left + 1, int_right):
                 curr = df["y"][i]
                 prev = df["y"][i-1]
-                print(curr, ", ", prev)
+                #print(curr, ", ", prev)
                 diffrences.append(abs(prev-curr))
         
-           print("\n")
+           #print("\n")
            avgDiffrence = np.mean(diffrences)
            stdDiffrence = np.std(diffrences)
 
-           print("Diffrence: ", stdDiffrence)
+           #print("Diffrence: ", stdDiffrence)
 
            steepnesTreshold = avgDiffrence * stdDiffrence
 
@@ -160,9 +164,9 @@ def findAnomaliesUsingProphet():
     for x in df["y"]:
         if (not np.isnan(x)):
             xd += 1
-    print(xd)
+    #print(xd)
     if (xd < 4): # vsaj 3 razlicne
-        print("not unique", df["y"] )
+        #print("not unique", df["y"] )
         df["anomaly"] = anomaliesStatusArr
         return df
     
@@ -194,6 +198,41 @@ def sortFunc(e):
     return int(e[1:-4])
 
 
+def calculate_site_metrics(df):
+    """
+    Identifies contiguous blocks of anomalies, calculates their count 
+    and total duration for a single site (file).
+    """
+    # Ensure ds is datetime
+    df['ds'] = pd.to_datetime(df['ds'])
+    
+    # Create a grouping ID for consecutive anomalies
+    # This increments every time the 'anomalies' value changes
+    df['group'] = (df['anomalies'] != df['anomalies'].shift()).cumsum()
+    
+    # Filter only the anomaly groups (where anomalies == 1)
+    anomaly_groups = df[df['anomalies'] == 1].groupby('group')
+    
+    site_interruption_count = anomaly_groups.ngroups
+    site_total_duration = pd.Timedelta(0)
+    
+    for _, group in anomaly_groups:
+        if len(group) > 0:
+            start_time = group['ds'].min()
+            end_time = group['ds'].max()
+            
+            # Duration is end - start. 
+            # Note: If there's only 1 point, duration is 0. 
+            # Often, we add one sampling interval to represent the block properly.
+            duration = end_time - start_time
+            
+            # If the sampling interval is known (e.g. 15 min), you might use:
+            # duration += pd.Timedelta(minutes=15) 
+            
+            site_total_duration += duration
+            
+    return site_interruption_count, site_total_duration.total_seconds() / 60
+
 def iterate():
     global anomaliesValuesArr
     global originalValuesArr
@@ -207,15 +246,19 @@ def iterate():
     global calibrationFactor
     global length
     global factor
-    directory = os.fsencode("./vsi_podatki").decode("utf-8")
+    global total_interruptions 
+    global total_duration_minutes 
+    global total_sites_processed 
+    
+    directory = os.fsencode("./ovrednoteni_podatki").decode("utf-8")
     lst = os.listdir(directory)
     lst.sort(key=sortFunc)
-    for file in lst[186:187]:
+    for file in lst[0:3]:
         filename = os.fsdecode(file)
-        print("File ", filename)
+        #print("File ", filename)
         if filename.endswith(".csv"): 
                 df = pd.read_csv(os.path.join(directory, filename),header=None)
-                df.columns = ['0', 'ds', 'y']
+                df.columns = ['0', 'ds', 'y', '3']
 
                 tempTimestampCol = df['ds']
                 
@@ -246,19 +289,43 @@ def iterate():
                         # print(len())
                 # print("Anomalies arr ", len(anomaliesArr))
                 df["anomalies"] = anomaliesArr
+                
+                # Calculate SAIFI/SAIDI components for THIS site
+                site_count, site_dur = calculate_site_metrics(df)
+                total_interruptions += site_count
+                total_duration_minutes += site_dur
+                total_sites_processed += 1
+                
+                print(f"Site {filename}: Interruptions: {site_count}, Duration: {site_dur:.2f} min")
+                
                 # print("Df anomalies ", len(df["anomalies"]))
                 df["ds"] = tempTimestampCol
                 df["y"] = originalValuesArr
-                # print(df)
+                #print(df)
+                df = df.drop(columns=["group"])
                 df.to_csv('rezultati.csv', mode='a', header = None, index=False)
                 finalDataFrame["y"] = originalValuesArr
                 #Display results
                 color_discrete_map = {'Yes': 'rgb(255,12,0)', 'No': 'blue'}
-                fig = px.scatter(finalDataFrame, x='ds', y='y', color='anomaly', title='Anomaly',
-                    color_discrete_map=color_discrete_map)
-                fig.show()
+                #fig = px.scatter(finalDataFrame, x='ds', y='y', color='anomaly', title='Anomaly',
+                #    color_discrete_map=color_discrete_map)
+                #fig.show()
         else:
                 continue 
+        
+    if total_sites_processed > 0:
+        saifi = total_interruptions / total_sites_processed
+        saidi = total_duration_minutes / total_sites_processed
+        
+        print("\n" + "="*30)
+        print("FINAL RELIABILITY INDICES")
+        print("="*30)
+        print(f"Total Sites Processed: {total_sites_processed}")
+        print(f"Total Interruption Events: {total_interruptions}")
+        print(f"Total Duration: {total_duration_minutes:.2f} minutes")
+        print(f"SAIFI: {saifi:.4f} (Avg interruptions per customer)")
+        print(f"SAIDI: {saidi:.4f} (Avg duration per customer in minutes)")
+        print("="*30)
 
 if __name__ == "__main__":
     iterate()
