@@ -24,6 +24,10 @@ anomaliesStatusArr = []
 anomaliesValuesArr = []
 originalValuesArr = []
 
+total_interruptions = 0
+total_duration_hours = 0
+total_sites_processed = 0
+
 #Config data sliding window
 window_size = 9
 quantiles = []
@@ -32,7 +36,7 @@ calibrationFactor = 0.035
 treshold = 0
 length = 0
 #Config data prophet
-factor = 1.1 # kako strogo odstopanje mora bit vecji faktor > bolj strogo
+factor = 1.1 # kako strogo odstopanje mora bit
 
 def findAnomaliesUsingSteepSlopes():
     global anomaliesValuesArr
@@ -86,12 +90,36 @@ def findAnomaliesUsingSteepSlopes():
 
     #Upper Bound is 50% of avg
     steep_upper_bound = (avg_all_steepness * 3) / 2
+    # steep_upper_bound = (avg_all_steepness * 150) / 100
     for index, row in filtered_df.iterrows():
       if ( row['steep'] > steep_upper_bound):
            int_left = int(row['left'])
            int_right = int(row['right'])
-           anomaliesStatusArr[int_left:int_right + 1] = "Yes"
-           anomaliesValuesArr[int_left:int_right + 1] = None
+
+           #print("Row: \n", row)
+           
+           diffrences = []
+           for i in range(int_left + 1, int_right):
+                curr = df["y"][i]
+                prev = df["y"][i-1]
+                #print(curr, ", ", prev)
+                diffrences.append(abs(prev-curr))
+        
+           #print("\n")
+           avgDiffrence = np.mean(diffrences)
+           stdDiffrence = np.std(diffrences)
+
+           #print("Diffrence: ", stdDiffrence)
+
+           steepnesTreshold = avgDiffrence * stdDiffrence
+
+           for i in range(int_left + 1, int_right):
+                curr = df["y"][i]
+                prev = df["y"][i-1]
+                diff = abs(prev-curr)
+                if diff > steepnesTreshold:
+                    anomaliesStatusArr[int_left:int_right + 1] = "Yes"
+                    anomaliesValuesArr[int_left:int_right + 1] = None
 
 def findAnomaliesUsingRollingWindow():
     global anomaliesValuesArr, anomaliesStatusArr, df
@@ -130,16 +158,19 @@ def findAnomaliesUsingProphet():
     global calibrationFactor
     global length
     global factor
+
     df["y"] = anomaliesValuesArr
     xd = 0
     for x in df["y"]:
         if (not np.isnan(x)):
             xd += 1
-    print(xd)
+    #print(xd)
     if (xd < 4): # vsaj 3 razlicne
-        print("not unique", df["y"] )
+        #print("not unique", df["y"] )
         df["anomaly"] = anomaliesStatusArr
         return df
+    
+    df["y"] = anomaliesValuesArr
     m = Prophet(changepoint_range=0.3, changepoint_prior_scale=0.5,interval_width=0.88)
     m.add_country_holidays(country_name='SI')
     # m.add_seasonality(name='hourly', period=0.04, fourier_order=20)
@@ -169,6 +200,23 @@ def sortFunc(e):
     return int(e[1:-4])
 
 
+def calculate_site_metrics(df):
+    df['ds'] = pd.to_datetime(df['ds'])
+    df['group'] = (df['anomalies'] != df['anomalies'].shift()).cumsum()
+    anomaly_groups = df[df['anomalies'] == 1].groupby('group')
+    
+    site_interruption_count = anomaly_groups.ngroups
+    site_total_duration = pd.Timedelta(0)
+    
+    for _, group in anomaly_groups:
+        if len(group) > 0:
+            start_time = group['ds'].min()
+            end_time = group['ds'].max()
+            duration = end_time - start_time + pd.Timedelta(hours=1)  # +1h interval
+            site_total_duration += duration
+            
+    return site_interruption_count, site_total_duration.total_seconds() / 3600  # ure
+
 def iterate():
     global anomaliesValuesArr
     global originalValuesArr
@@ -182,12 +230,16 @@ def iterate():
     global calibrationFactor
     global length
     global factor
+    global total_interruptions 
+    global total_duration_hours 
+    global total_sites_processed 
+    
     directory = os.fsencode("./vsi_podatki").decode("utf-8")
     lst = os.listdir(directory)
     lst.sort(key=sortFunc)
-    for file in lst[0:1]:
+    for file in lst:
         filename = os.fsdecode(file)
-        print("File ", filename)
+        #print("File ", filename)
         if filename.endswith(".csv"): 
                 df = pd.read_csv(os.path.join(directory, filename),header=None)
                 df.columns = ['0', 'ds', 'y']
@@ -212,7 +264,6 @@ def iterate():
                 findAnomaliesUsingRollingWindow()
                 findAnomaliesUsingSteepSlopes()
                 finalDataFrame = findAnomaliesUsingProphet()
-
                 # print(finalDataFrame)
                 anomaliesArr = []
                 # print(finalDataFrame["anomaly"])
@@ -225,21 +276,44 @@ def iterate():
                         # print(len())
                 # print("Anomalies arr ", len(anomaliesArr))
                 df["anomalies"] = anomaliesArr
+                
+                # Calculate SAIFI/SAIDI components for THIS site
+                site_count, site_dur = calculate_site_metrics(df)
+                total_interruptions += site_count
+                total_duration_hours += site_dur
+                total_sites_processed += 1
+                
+                #print(f"Site {filename}: Interruptions: {site_count}, Duration: {site_dur:.2f} h")
+                
                 # print("Df anomalies ", len(df["anomalies"]))
                 df["ds"] = tempTimestampCol
                 df["y"] = originalValuesArr
-                # print(df)
+                #print(df)
+                df = df.drop(columns=["group"])
+                df = df.drop(columns=["y"])
                 df.to_csv('rezultati.csv', mode='a', header = None, index=False)
                 finalDataFrame["y"] = originalValuesArr
                 #`Display results
                 color_discrete_map = {'Yes': 'rgb(255,12,0)', 'No': 'blue'}
-                fig = px.scatter(finalDataFrame, x='ds', y='y', color='anomaly', title='Anomaly',
-                    color_discrete_map=color_discrete_map)
-                fig.show()
-                #Display plot
-                
+                #fig = px.scatter(finalDataFrame, x='ds', y='y', color='anomaly', title='Anomaly',
+                #    color_discrete_map=color_discrete_map)
+                #fig.show()
         else:
                 continue 
+        
+    if total_sites_processed > 0:
+        saifi = total_interruptions / total_sites_processed
+        saidi = total_duration_hours / total_sites_processed
+        
+        print("\n" + "="*30)
+        print("FINAL RELIABILITY INDICES")
+        print("="*30)
+        print(f"Total Sites Processed: {total_sites_processed}")
+        print(f"Total Interruption Events: {total_interruptions}")
+        print(f"Total Duration: {total_duration_hours:.2f} hours")
+        print(f"SAIFI: {saifi:.4f} (Avg interruptions per customer)")
+        print(f"SAIDI: {saidi:.4f} (Avg duration per customer in hours)")   
+        print("="*30)
 
 if __name__ == "__main__":
     iterate()
