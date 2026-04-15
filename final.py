@@ -199,6 +199,8 @@ def iterate():
                 quantiles = np.quantile(df['y'], [0,0.25,0.5,0.75,1])
                 q1AndQ3Diffrence = quantiles[3] - quantiles[1]
                 treshold = q1AndQ3Diffrence * calibrationFactor
+                if treshold < 1.0:
+                    treshold = 1
                 length = len(df["y"]) - window_size
                 # print("Length ",length)
                 findAnomaliesUsingRollingWindow()
