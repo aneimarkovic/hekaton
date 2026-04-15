@@ -8,7 +8,7 @@ import scipy.signal as s
 import os
 
 finalDataFrame = pd.DataFrame()
-file = Path("./vsi_podatki/m182.csv")  
+file = Path("./ovrednoteni_podatki/m11.csv")  
 # df = pd.read_csv(file,header=None)
 df = pd.DataFrame()
 
@@ -25,14 +25,14 @@ anomaliesValuesArr = []
 originalValuesArr = []
 
 #Config data sliding window
-window_size = 12
+window_size = 9
 quantiles = []
 q1AndQ3Diffrence = 0
-calibrationFactor = 0.025
+calibrationFactor = 0.035
 treshold = 0
 length = 0
 #Config data prophet
-factor = 1 # kako strogo odstopanje mora bit
+factor = 1.1 # kako strogo odstopanje mora bit vecji faktor > bolj strogo
 
 def findAnomaliesUsingSteepSlopes():
     global anomaliesValuesArr
@@ -94,36 +94,28 @@ def findAnomaliesUsingSteepSlopes():
            anomaliesValuesArr[int_left:int_right + 1] = None
 
 def findAnomaliesUsingRollingWindow():
-    global anomaliesValuesArr
-    global originalValuesArr
-    global anomaliesStatusArr
-    global df
-    global finalDataFrame
-    global treshold
-    global window_size
-    global quantiles
-    global q1AndQ3Diffrence
-    global calibrationFactor
-    global length
-    global factor
-    for i in range(0, length + 1):
-      mean = df['y'][i:i+window_size].mean()
-      upperBound = mean + treshold
-      lowerBound = mean - treshold
+    global anomaliesValuesArr, anomaliesStatusArr, df
+    global window_size, length
 
-      anomaly = True
+    y = df['y'].values.astype(float).copy()
+    n = len(y)
 
-      for j in range(i, i+window_size):
-            if (df["y"][j] < lowerBound) or (df["y"][j] > upperBound):
-                  anomaly = False
+    zero_mask = (y == 0.0)
+    anomaliesStatusArr[zero_mask] = "Yes"
+    anomaliesValuesArr[zero_mask] = np.nan
 
-      if (df["y"][i] == 0.0):
-        anomaliesValuesArr[i] = None
-        anomaliesStatusArr[i] = "Yes"
-
-      if anomaly:
-        anomaliesStatusArr[i:i+window_size] = "Yes"
-        anomaliesValuesArr[i:i+window_size] = None
+    # Izračunaj globalni std samo iz ne-anomalnih vrednosti
+    valid_vals = y[~np.isnan(y)]
+    global_std = np.std(valid_vals)
+    
+    # Flat segment: lokalni std mora biti manjši od globalnega
+    flat_threshold = global_std * 0.03 
+    
+    for i in range(n - window_size + 1):
+        window = y[i:i + window_size]
+        if np.std(window) < flat_threshold:
+            anomaliesStatusArr[i:i + window_size] = "Yes"
+            anomaliesValuesArr[i:i + window_size] = np.nan
 
 def findAnomaliesUsingProphet():
     global anomaliesValuesArr
@@ -139,7 +131,16 @@ def findAnomaliesUsingProphet():
     global length
     global factor
     df["y"] = anomaliesValuesArr
-    m = Prophet(changepoint_range=0.3, changepoint_prior_scale=0.5,interval_width=0.87)
+    xd = 0
+    for x in df["y"]:
+        if (not np.isnan(x)):
+            xd += 1
+    print(xd)
+    if (xd < 4): # vsaj 3 razlicne
+        print("not unique", df["y"] )
+        df["anomaly"] = anomaliesStatusArr
+        return df
+    m = Prophet(changepoint_range=0.3, changepoint_prior_scale=0.5,interval_width=0.88)
     m.add_country_holidays(country_name='SI')
     # m.add_seasonality(name='hourly', period=0.04, fourier_order=20)
     m.fit(df)
@@ -159,7 +160,9 @@ def findAnomaliesUsingProphet():
     for i in range(0,length + window_size):
       if(np.abs(forecasting_final['error'][i]) > factor*forecasting_final['uncertainty'][i]):
             forecasting_final.loc[i,"anomaly"] = "Yes"
-    
+
+    fig = m.plot(forecasting_final)
+    fig.waitforbuttonpress()
     return forecasting_final
 
 def sortFunc(e):
@@ -182,12 +185,13 @@ def iterate():
     directory = os.fsencode("./vsi_podatki").decode("utf-8")
     lst = os.listdir(directory)
     lst.sort(key=sortFunc)
-    for file in lst[:2]:
+    for file in lst[0:1]:
         filename = os.fsdecode(file)
         print("File ", filename)
         if filename.endswith(".csv"): 
                 df = pd.read_csv(os.path.join(directory, filename),header=None)
                 df.columns = ['0', 'ds', 'y']
+                #df = df.drop(columns='3')
 
                 tempTimestampCol = df['ds']
                 
@@ -201,6 +205,8 @@ def iterate():
                 treshold = q1AndQ3Diffrence * calibrationFactor
                 if treshold < 1.0:
                     treshold = 1
+                if (treshold > 2):
+                    treshold = 2
                 length = len(df["y"]) - window_size
                 # print("Length ",length)
                 findAnomaliesUsingRollingWindow()
@@ -210,7 +216,7 @@ def iterate():
                 # print(finalDataFrame)
                 anomaliesArr = []
                 # print(finalDataFrame["anomaly"])
-                finalDataFrame["anomaly"] = finalDataFrame["anomaly"].replace("Ye", "Yes")
+                #finalDataFrame["anomaly"] = finalDataFrame["anomaly"].replace("Ye", "Yes")
                 for i in range(0, len(finalDataFrame["anomaly"])):
                     if (finalDataFrame["anomaly"][i] == "Yes"):
                         anomaliesArr.append(1)
@@ -225,11 +231,13 @@ def iterate():
                 # print(df)
                 df.to_csv('rezultati.csv', mode='a', header = None, index=False)
                 finalDataFrame["y"] = originalValuesArr
-                #Display results
+                #`Display results
                 color_discrete_map = {'Yes': 'rgb(255,12,0)', 'No': 'blue'}
                 fig = px.scatter(finalDataFrame, x='ds', y='y', color='anomaly', title='Anomaly',
                     color_discrete_map=color_discrete_map)
                 fig.show()
+                #Display plot
+                
         else:
                 continue 
 
