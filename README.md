@@ -33,3 +33,12 @@ Po končani detekciji program združi zaporedne točke z anomalijami v posamezne
 1.  V direktorij `vsi_podatki` vstavite svoje `.csv` datoteke z meritvami.
 2.  Zaženite program, ki bo samodejno procesiral vse datoteke v mapi.
 3.  Program bo v konzoli izpisal izračunane vrednosti SAIFI in SAIDI, podrobno označene anomalije pa shranil v datoteko `rezultati.csv`.
+
+## 4. Rezultati
+| Parameter | Vrednost |
+| :--- | :--- |
+| **Skupno število obdelanih lokacij** (Total sites processed) | 200 |
+| **Skupno število dogodkov prekinitev** (Total interruption events) | 10.341 |
+| **Skupno trajanje** (Total Duration) | 188.252,00 |
+| **SAIFI** | 51,705 |
+| **SAIDI** | 941,260 |
